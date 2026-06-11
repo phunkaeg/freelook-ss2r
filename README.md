@@ -76,12 +76,12 @@ Remove the Steam launch option if you set it.
   "Saved Games" folder (including relocated/OneDrive profiles);
   if yours still is not found it will ask for the path.
 * Antivirus flags the loader/DLL: false positive common to all
-  injection-based game mods. Source code: [REPO URL].
+  injection-based game mods. Source code: https://github.com/phunkaeg/freelook-ss2r.
   VirusTotal: [LINK].
 
 --- KNOWN ISSUES --------------------------------------------
 * None blocking at release.
-* Report issues at [REPO URL]/issues - include flataim.log.
+* Report issues at https://github.com/phunkaeg/freelook-ss2r/issues - include flataim.log.
 
 --- CREDITS -------------------------------------------------
 Code & design: [YOUR NAME/HANDLE]
