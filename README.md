@@ -62,6 +62,10 @@ Delete the five files from the game folder and `mods\flataim.kpf`. To un-patch a
 
 ## Troubleshooting
 
+- **"Injection failed (alloc/write)" / the game starts but the mod doesn't load** — Steam sometimes relaunches the game as a new process, which the loader can lose track of (and if Steam is running as Administrator, a normal loader can't inject into it). The loader (v1.0.1+) now follows the relaunch automatically and writes a `freelookloader.log` next to it. If it still fails:
+  - **Use the Steam Launch Options method** (Install step 3, option 2). Wrapping `%command%` makes Steam launch the loader *as* the game, so there's no relaunch to chase — this is the most reliable path.
+  - **Match elevation:** if you start Steam as Administrator, also run `FreelookLoader.exe` as Administrator (or just don't run Steam elevated). Both must be the same.
+  - Still stuck? Open an issue and attach `freelookloader.log`.
 - **F5 does nothing** — check `flataim.log` in the game folder. `waiting for SS2FA Squirrel bridge` means `mods\flataim.kpf` isn't loading; for an existing save, run `FreelookSavePatcher.exe`.
 - **Crosshair off-centre** — shouldn't happen (auto-calibration). Open an issue with `flataim.log` and your resolution.
 - **Saves not found by the patcher** — it resolves your real Windows *Saved Games* folder (including relocated/OneDrive profiles); if yours still isn't found it will ask for the path.

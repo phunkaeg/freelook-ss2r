@@ -56,6 +56,17 @@
   .vidframe video{width:100%;display:block}
   .vidframe::after{content:"";position:absolute;inset:0;pointer-events:none;
     background:repeating-linear-gradient(0deg, rgba(84,255,141,.05) 0 2px, transparent 2px 4px)}
+  .ver{margin:20px 0 0;color:var(--muted);letter-spacing:.1em;font-size:13px}
+  .ver b{color:var(--shodan)}
+  .ver a{color:var(--purple-bright)}
+  #changelog .ver-h{font-family:"Orbitron",sans-serif;color:var(--purple-bright);
+    letter-spacing:.1em;font-size:15px;margin:18px 0 6px}
+  #changelog .ver-h:first-of-type{margin-top:0}
+  #changelog .tag{font-family:"Share Tech Mono",monospace;font-size:11px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--shodan);border:1px solid var(--shodan-dim);
+    padding:1px 8px;margin-left:8px;vertical-align:middle}
+  #changelog ul{margin:0 0 6px;padding-left:20px}
+  #changelog li{margin:7px 0}
   footer{padding:40px 20px 60px;text-align:center;color:var(--muted);font-size:12px;letter-spacing:.06em}
   footer a{color:var(--purple-bright)}
   a{color:var(--shodan)}
@@ -66,6 +77,7 @@
   <a class="brand" href="#">FREE<span class="hl">LOOK</span></a>
   <span class="links">
     <a href="#install">Install</a>
+    <a href="#changelog">Changelog</a>
     <a href="#support">Support</a>
     <a href="https://github.com/phunkaeg/freelook-ss2r">Source</a>
   </span>
@@ -78,6 +90,7 @@
   <a class="cta" href="https://github.com/phunkaeg/freelook-ss2r/releases/latest">&#8595; Download</a>
   <a class="cta alt" href="https://github.com/phunkaeg/freelook-ss2r">View Source</a>
   <a class="cta alt" href="https://ko-fi.com/funk">&#9749; Buy me a coffee</a>
+  <p class="ver">Latest release: <b>v1.0.1</b> &middot; <a href="#changelog">what's new</a></p>
 </header>
 
 <section>
@@ -106,6 +119,20 @@
   </ol>
   <p>Full details, keybind table and troubleshooting in the
   <a href="https://github.com/phunkaeg/freelook-ss2r#readme">README</a>.</p>
+</section>
+
+<section id="changelog">
+  <h2>Changelog</h2>
+  <p class="ver-h">v1.0.1 <span class="tag">latest</span></p>
+  <ul>
+    <li><b>Fixed launch failures</b> on some Steam setups (&ldquo;Injection failed&rdquo;). The loader now follows Steam's process relaunch and flags Administrator/elevation mismatches, and writes a <code>freelookloader.log</code> for diagnosis. Single-file update &mdash; just replace <code>FreelookLoader.exe</code>.</li>
+    <li><b>Fixed</b> <code>freelook_press_type=hold</code> and <code>edge_pan_press_type</code> being ignored when the <code>.ini</code> line carried a trailing <code>; comment</code>.</li>
+    <li><b>New</b> <code>weapon_view_rotate</code> &mdash; set to <code>0</code> to keep the gun model in its rest pose while your aim still tracks the crosshair.</li>
+  </ul>
+  <p class="ver-h">v1.0.0</p>
+  <ul>
+    <li>Initial release &mdash; free-aim crosshair, edge-pan view follow, all weapons + melee (wrench included), projectile &amp; muzzle FX, and a resolution-independent HUD.</li>
+  </ul>
 </section>
 
 <section id="support" class="kofi">

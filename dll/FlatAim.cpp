@@ -189,6 +189,7 @@ int   g_weaponEffectFollow = 1;
 int   g_weaponEffectRecreate = 1;
 int   g_weaponEffectLog = 0;
 int   g_weaponProxyPivotEnable = 1;
+int   g_weaponViewRotate = 1;  // 0 = gun model holds its neutral (view-centered) pose; aim/projectiles still track
 int   g_weaponProxyPivotAllWeapons = 1;
 float g_weaponProxyPivotLongForward = -0.75f;
 float g_weaponProxyPivotLongLeft = 0.0f;
@@ -336,9 +337,26 @@ float IniF(const char* key, float def) {
 }
 int IniI(const char* key, int def) { return GetPrivateProfileIntA("flataim", key, def, g_iniPath); }
 
+// Strip an inline comment (';' or '#' at start or after whitespace) and any
+// surrounding whitespace, in place. GetPrivateProfileString does NOT remove
+// trailing "; comment" text, so without this the press-type strings come back
+// as e.g. "hold     ; toggle or hold" and exact-match parsing silently fails.
+void TrimIniValueInPlace(char* s) {
+    if (!s) return;
+    for (char* p = s; *p; ++p) {
+        if ((*p == ';' || *p == '#') && (p == s || p[-1] == ' ' || p[-1] == '\t')) { *p = 0; break; }
+    }
+    size_t n = strlen(s);
+    while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\r' || s[n-1] == '\n')) s[--n] = 0;
+    char* p = s;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (p != s) memmove(s, p, strlen(p) + 1);
+}
+
 void IniS(const char* key, const char* def, char* out, size_t outSize) {
     if (!out || outSize == 0) return;
     GetPrivateProfileStringA("flataim", key, def ? def : "", out, static_cast<DWORD>(outSize), g_iniPath);
+    TrimIniValueInPlace(out);
 }
 
 bool TryReadGameClientSize(float& w, float& h);
@@ -503,6 +521,7 @@ void LoadIni() {
     g_weaponEffectRecreate = IniI("weapon_effect_recreate", g_weaponEffectRecreate);
     g_weaponEffectLog = IniI("weapon_effect_log", g_weaponEffectLog);
     g_weaponProxyPivotEnable = IniI("weapon_proxy_pivot_enable", g_weaponProxyPivotEnable);
+    g_weaponViewRotate = IniI("weapon_view_rotate", g_weaponViewRotate);
     g_weaponProxyPivotAllWeapons = IniI("weapon_proxy_pivot_all_weapons", g_weaponProxyPivotAllWeapons);
     g_weaponProxyPivotLongForward = IniF("weapon_proxy_pivot_long_forward", g_weaponProxyPivotLongForward);
     g_weaponProxyPivotLongLeft = IniF("weapon_proxy_pivot_long_left", g_weaponProxyPivotLongLeft);
@@ -706,6 +725,7 @@ void LoadIni() {
     g_weaponProxyAxisDraw = g_weaponProxyAxisDraw ? 1 : 0;
     g_weaponProxyAxisLen = std::max(0.1f, std::min(g_weaponProxyAxisLen, 20.0f));
     g_weaponProxyPivotEnable = g_weaponProxyPivotEnable ? 1 : 0;
+    g_weaponViewRotate = g_weaponViewRotate ? 1 : 0;
     g_weaponProxyPivotAllWeapons = g_weaponProxyPivotAllWeapons ? 1 : 0;
     g_weaponProxyPivotLongForward = std::max(-5.0f, std::min(g_weaponProxyPivotLongForward, 5.0f));
     g_weaponProxyPivotLongLeft = std::max(-5.0f, std::min(g_weaponProxyPivotLongLeft, 5.0f));
@@ -1666,6 +1686,7 @@ void PublishSquirrelTunables() {
     SetRawConfigInt("ss2fa_weapon_effect_recreate", g_weaponEffectRecreate);
     SetRawConfigInt("ss2fa_weapon_effect_log", g_weaponEffectLog);
     SetRawConfigInt("ss2fa_weapon_proxy_pivot_enable", g_weaponProxyPivotEnable);
+    SetRawConfigInt("ss2fa_weapon_view_rotate", g_weaponViewRotate);
     SetRawConfigInt("ss2fa_weapon_proxy_pivot_all_weapons", g_weaponProxyPivotAllWeapons);
     SetRawConfigFloat("ss2fa_weapon_proxy_pivot_long_forward", g_weaponProxyPivotLongForward);
     SetRawConfigFloat("ss2fa_weapon_proxy_pivot_long_left", g_weaponProxyPivotLongLeft);

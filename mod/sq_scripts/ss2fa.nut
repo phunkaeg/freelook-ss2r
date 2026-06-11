@@ -2696,6 +2696,15 @@ class SS2FA.AimHandler
                 SS2FA_GetFloat("ss2fa_weapon_proxy_test_heading", 0.0)
             );
         }
+        // WEAPON VIEWMODEL ROTATION TOGGLE: ss2fa_weapon_view_rotate=0 holds the gun
+        // model in its neutral (screen-centered) pose so it does NOT swing with the
+        // crosshair. Aim and projectiles are unaffected -- they use aimDir / the DLL aim,
+        // not this facing. Reusing the view-centered facing means the pivot block below
+        // cancels to zero (rotatedBasis == neutralBasis), so the gun also doesn't shift.
+        if(SS2FA_GetInt("ss2fa_weapon_view_rotate", 1) == 0){
+            local centeredAim = SS2FA_ViewFrameAim(0.0, 0.0);
+            facing = SS2FA_DirToProxyFacingViewRelative(centeredAim.x, centeredAim.y, centeredAim.z);
+        }
         // VIEW-PITCH ROLL COMPENSATION (the actual fix): the engine baked a roll into
         // the proxy = f(view pitch at creation). Subtract it back via the bank axis
         // (Shot 5 proved bank rolls about the barrel). Live-tunable scale; 0 = off.
