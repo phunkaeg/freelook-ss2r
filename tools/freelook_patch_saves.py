@@ -99,7 +99,8 @@ def main() -> int:
         if not bak.exists():
             shutil.copy2(s, bak)
         ns = argparse.Namespace(save=str(s), mod=MOD, position="last",
-                                output=None, overwrite=False, in_place=True, force=False)
+                                output=None, overwrite=False, in_place=True, force=False,
+                                backup_dir=None)
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
