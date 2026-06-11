@@ -51,6 +51,11 @@
   .kofi{text-align:center}
   .kofi p{max-width:600px;margin:10px auto;color:var(--text)}
   .kofi .heart{color:var(--warn)}
+  .vidframe{position:relative;border:1px solid var(--line);background:#000;
+    box-shadow:0 0 0 1px rgba(84,255,141,.12),0 18px 60px rgba(0,0,0,.7)}
+  .vidframe video{width:100%;display:block}
+  .vidframe::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(84,255,141,.05) 0 2px, transparent 2px 4px)}
   footer{padding:40px 20px 60px;text-align:center;color:var(--muted);font-size:12px;letter-spacing:.06em}
   footer a{color:var(--purple-bright)}
   a{color:var(--shodan)}
@@ -74,6 +79,15 @@
   <a class="cta alt" href="https://github.com/phunkaeg/freelook-ss2r">View Source</a>
   <a class="cta alt" href="https://ko-fi.com/funk">&#9749; Buy me a coffee</a>
 </header>
+
+<section>
+  <h2>Live feed</h2>
+  <div class="vidframe">
+    <video autoplay loop muted playsinline>
+      <source src="assets/freelook_demo1.mp4" type="video/mp4">
+    </video>
+  </div>
+</section>
 
 <section>
   <h2>What it does</h2>
