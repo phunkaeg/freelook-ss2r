@@ -80,7 +80,7 @@ None blocking at release. Report issues **[here](https://github.com/phunkaeg/fre
 
 ## Credits
 
-**Code & design:** [YOUR NAME/HANDLE]
+**Code & design:** FUNK
 Built with [MinHook](https://github.com/TsudaKageyu/minhook) © Tsuda Kageyu (BSD-2-Clause).
 Thanks to the **Nightdive Discord community** for the original request.
 
