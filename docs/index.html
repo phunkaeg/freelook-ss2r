@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FREELOOK — free-aim for System Shock 2: 25th Anniversary Remaster</title>
+<meta name="description" content="Free-aim like the original System Shock (1994). Press F5 and move the crosshair independently of the camera. For SS2: 25th Anniversary Remaster.">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#05070a; --panel:#0c1018; --line:#1b2230;
+    --purple:#7170b4; --purple-bright:#9b9be6;
+    --shodan:#54ff8d; --shodan-dim:#2f7d52;
+    --text:#c7ccda; --muted:#6b7186; --warn:#ff5a4d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:"Share Tech Mono",ui-monospace,Menlo,Consolas,monospace;line-height:1.6;overflow-x:hidden;
+    background-image:radial-gradient(1200px 600px at 50% -10%, rgba(113,112,180,.18), transparent 60%);}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:3;
+    background:repeating-linear-gradient(0deg, rgba(180,210,195,.045) 0 1px, rgba(0,0,0,0) 1px 3px);}
+  nav{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;
+    padding:14px 24px;background:rgba(5,7,10,.78);border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+  nav .brand{font-family:"Orbitron",sans-serif;font-weight:900;letter-spacing:.12em;color:#eef0ff;text-decoration:none}
+  nav .brand .hl{color:var(--shodan)}
+  nav .links a{color:var(--muted);text-decoration:none;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-left:18px}
+  nav .links a:hover{color:var(--purple-bright)}
+  main{max-width:880px;margin:0 auto;padding:0 20px}
+  header.hero{text-align:center;padding:72px 0 36px}
+  .eyebrow{color:var(--shodan);letter-spacing:.45em;font-size:12px;text-transform:uppercase;margin:0 0 8px}
+  h1{font-family:"Orbitron",sans-serif;font-weight:900;letter-spacing:.06em;
+    font-size:clamp(34px,7vw,64px);margin:0;color:#eef0ff}
+  h1 .hl{color:var(--shodan);text-shadow:0 0 22px rgba(84,255,141,.6)}
+  .subtitle{color:var(--purple-bright);margin:12px 0 0;font-size:clamp(14px,2.4vw,17px);letter-spacing:.12em}
+  .cta{display:inline-block;margin-top:30px;padding:14px 34px;border:1px solid var(--shodan);
+    color:var(--shodan);text-decoration:none;letter-spacing:.2em;text-transform:uppercase;font-size:14px;
+    box-shadow:0 0 18px rgba(84,255,141,.25), inset 0 0 14px rgba(84,255,141,.08)}
+  .cta:hover{background:rgba(84,255,141,.1);box-shadow:0 0 28px rgba(84,255,141,.45)}
+  .cta.alt{border-color:var(--purple);color:var(--purple-bright);box-shadow:0 0 18px rgba(113,112,180,.25);margin-left:12px}
+  .cta.alt:hover{background:rgba(113,112,180,.12)}
+  section{margin:44px 0;padding:26px 28px;background:var(--panel);border:1px solid var(--line);
+    box-shadow:0 0 0 1px rgba(84,255,141,.06),0 14px 40px rgba(0,0,0,.5)}
+  h2{font-family:"Orbitron",sans-serif;color:#eef0ff;letter-spacing:.14em;font-size:18px;text-transform:uppercase;margin:0 0 14px}
+  h2::before{content:"// ";color:var(--shodan-dim)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+  .card{border:1px solid var(--line);padding:14px 16px;background:rgba(5,7,10,.5)}
+  .card b{color:var(--shodan);display:block;margin-bottom:6px;letter-spacing:.08em}
+  code,kbd{background:#070b12;border:1px solid var(--line);padding:2px 7px;border-radius:3px;color:var(--shodan);font-family:inherit;font-size:.95em}
+  ol{margin:0;padding-left:22px}
+  ol li{margin:8px 0}
+  .kofi{text-align:center}
+  .kofi p{max-width:600px;margin:10px auto;color:var(--text)}
+  .kofi .heart{color:var(--warn)}
+  footer{padding:40px 20px 60px;text-align:center;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  footer a{color:var(--purple-bright)}
+  a{color:var(--shodan)}
+</style>
+</head>
+<body>
+<nav>
+  <a class="brand" href="#">FREE<span class="hl">LOOK</span></a>
+  <span class="links">
+    <a href="#install">Install</a>
+    <a href="#support">Support</a>
+    <a href="https://github.com/phunkaeg/freelook-ss2r">Source</a>
+  </span>
+</nav>
+<main>
+<header class="hero">
+  <p class="eyebrow">System Shock 2 &middot; 25th Anniversary Remaster</p>
+  <h1>FREE<span class="hl">LOOK</span> MODE</h1>
+  <p class="subtitle">AIM LIKE IT'S 1994 — THE CROSSHAIR IS YOURS AGAIN</p>
+  <a class="cta" href="https://github.com/phunkaeg/freelook-ss2r/releases/latest">&#8595; Download</a>
+  <a class="cta alt" href="https://github.com/phunkaeg/freelook-ss2r">View Source</a>
+</header>
+
+<section>
+  <h2>What it does</h2>
+  <p>Press <kbd>F5</kbd> and the crosshair detaches from the camera — sweep it across the screen
+  like the original <b>System Shock (1994)</b>, while the view edge-pans when you push the
+  reticle to the border. Toggle back to standard mouselook any time.</p>
+  <div class="grid">
+    <div class="card"><b>EVERYTHING AIMS</b>Guns, projectiles, melee (wrench included), muzzle flash and object selection all follow the free crosshair.</div>
+    <div class="card"><b>ANY RESOLUTION</b>The HUD space is auto-calibrated at runtime. 1080p to ultrawide — dead centre, every time.</div>
+    <div class="card"><b>NO FUSS</b>Loader included — no manual injection. Steam launch-options support. Save patcher with automatic backups.</div>
+    <div class="card"><b>REBINDABLE</b>Toggle on any key or mouse button via <code>flataim.ini</code> — keybind table in the README.</div>
+  </div>
+</section>
+
+<section id="install">
+  <h2>Install in two minutes</h2>
+  <ol>
+    <li>Drop <code>FreelookLoader.exe</code>, <code>Launch Freelook.bat</code>, <code>FlatAim.dll</code> and <code>flataim.ini</code> into the game folder.</li>
+    <li>Drop <code>flataim.kpf</code> into the <code>mods</code> folder.</li>
+    <li>Launch via <code>Launch Freelook.bat</code> — or set Steam Launch Options to <code>"...\FreelookLoader.exe" %command%</code> and press Play forever after.</li>
+    <li>Existing save? Run <code>FreelookSavePatcher.exe</code> — pick your saves by name; originals are backed up automatically.</li>
+  </ol>
+  <p>Full details, keybind table and troubleshooting in the
+  <a href="https://github.com/phunkaeg/freelook-ss2r#readme">README</a>.</p>
+</section>
+
+<section id="support" class="kofi">
+  <h2>Support the mod</h2>
+  <p><!-- KOFI SPIEL: replace this paragraph with your own words -->
+  Freelook is free and always will be. If it brought a little 1994 back into your 2026,
+  you can fuel the next late-night debugging session <span class="heart">&#10084;</span></p>
+  <a class="cta" href="https://ko-fi.com/YOUR_KOFI_NAME">&#9749; Buy me a Ko-fi</a>
+</section>
+</main>
+
+<footer>
+  <p>Built with <a href="https://github.com/TsudaKageyu/minhook">MinHook</a> &middot;
+  Thanks to the Nightdive Discord community for the original request.<br>
+  Not affiliated with Nightdive Studios. Use at your own risk. &middot;
+  <a href="https://github.com/phunkaeg/freelook-ss2r/issues">Report an issue</a></p>
+</footer>
+</body>
+</html>
