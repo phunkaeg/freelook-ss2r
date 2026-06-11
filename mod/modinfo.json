@@ -1,0 +1,7 @@
+{
+  "title": "SS2 Freelook Mode",
+  "version": "0.29",
+  "description": "Non-VR Freelook mode: move the gameplay crosshair independently, with weapon, projectile, muzzle-flash, shell ejection, melee, and selection follow. Driven by flataim.dll via the ss2fa_aim config bridge.",
+  "author": "SS2VR",
+  "requirements": []
+}

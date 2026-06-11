@@ -1,0 +1,4 @@
+build/
+dist/
+*.kpf.bak
+__pycache__/
