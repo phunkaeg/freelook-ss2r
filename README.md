@@ -41,6 +41,18 @@ Works with all guns, projectiles, melee (wrench included), muzzle flash, and obj
 | **Mouse** | moves the crosshair; the view edge-pans at the borders |
 | **`flataim.ini`** | sensitivity, edge-pan feel, weapon pivot, melee placement — documented inline. Re-read every time you toggle Freelook on; no restart needed. |
 
+## Optional feel tweaks
+
+All off/neutral by default — set in `flataim.ini` (re-read on each Freelook toggle):
+
+| Key | What it does |
+|---|---|
+| `hide_crosshair_idle=1` | Hide the crosshair in normal mouselook; it returns while free-aiming (hipfire feel). |
+| `edge_pan_press_type=hold_pan` | Camera stays **static**; the view pans only **while F6 is held** (vs `hold_lock` = pans by default, hold to stop). |
+| `edge_pan_mouse_delta=1` (+ `_gain`) | At a pinned reticle edge, reclaim the clamped mouse motion as extra turn rate. `_gain` (default 1.0) tunes the strength. |
+| `weapon_recenter_on_release=1` (+ `weapon_recenter_ms`) | Ease the gun back to neutral when you release Freelook instead of snapping. `_ms` (default 150) is the glide time. |
+| `weapon_center=1` | Put the gun on the screen **centerline** (System Shock 1 look) instead of right-justified — applies in both Freelook and normal play. |
+
 ## Rebinding the toggle
 
 In `flataim.ini`, set `toggle_vk` to a Windows virtual-key code (hex). Default: `toggle_vk=0x74` (F5).

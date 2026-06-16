@@ -90,7 +90,7 @@
   <a class="cta" href="https://github.com/phunkaeg/freelook-ss2r/releases/latest">&#8595; Download</a>
   <a class="cta alt" href="https://github.com/phunkaeg/freelook-ss2r">View Source</a>
   <a class="cta alt" href="https://ko-fi.com/funk">&#9749; Buy me a coffee</a>
-  <p class="ver">Latest release: <b>v1.0.1</b> &middot; <a href="#changelog">what's new</a></p>
+  <p class="ver">Latest release: <b>v1.0.2</b> &middot; <a href="#changelog">what's new</a></p>
 </header>
 
 <section>
@@ -123,7 +123,14 @@
 
 <section id="changelog">
   <h2>Changelog</h2>
-  <p class="ver-h">v1.0.1 <span class="tag">latest</span></p>
+  <p class="ver-h">v1.0.2 <span class="tag">latest</span></p>
+  <ul>
+    <li><b>Fixed</b> switches/keypads that wouldn't frob from one side &mdash; the free-aim selection's &ldquo;is it in front of you?&rdquo; test now allows a tolerance, so both sides work.</li>
+    <li><b>Fixed</b> the wrench (and melee) blocking ALL frobbing after using Freelook &mdash; your own weapon mesh is now excluded from the frob pick.</li>
+    <li><b>Fixed</b> a framerate hitch &amp; console churn from the bridge echoing every update (now silent); items un-frobbable in normal play after Freelook; and reload animations now play on the Freelook weapon. Archetype-family frob detection added too.</li>
+    <li><b>New feel options</b> (all opt-in): <code>hide_crosshair_idle</code>, <code>edge_pan_press_type=hold_pan</code>, edge mouse-delta, <code>weapon_recenter_on_release</code>, and <code>weapon_center</code> (SS1-style centered gun).</li>
+  </ul>
+  <p class="ver-h">v1.0.1</p>
   <ul>
     <li><b>Fixed launch failures</b> on some Steam setups (&ldquo;Injection failed&rdquo;). The loader now follows Steam's process relaunch and flags Administrator/elevation mismatches, and writes a <code>freelookloader.log</code> for diagnosis. Single-file update &mdash; just replace <code>FreelookLoader.exe</code>.</li>
     <li><b>Fixed</b> <code>freelook_press_type=hold</code> and <code>edge_pan_press_type</code> being ignored when the <code>.ini</code> line carried a trailing <code>; comment</code>.</li>

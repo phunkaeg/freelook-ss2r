@@ -23,6 +23,58 @@ if(!("proxyRollApplied" in SS2FA)) SS2FA.proxyRollApplied <- 0.0;
 if(!("proxyRollSign" in SS2FA)) SS2FA.proxyRollSign <- 1.0;
 if(!("proxyRollKill" in SS2FA)) SS2FA.proxyRollKill <- 0;
 if(!("proxyViewPitchAtCreate" in SS2FA)) SS2FA.proxyViewPitchAtCreate <- 0.0;
+if(!("lastAnimProbeMs" in SS2FA)) SS2FA.lastAnimProbeMs <- 0;
+if(!("lastSizeProbeMs" in SS2FA)) SS2FA.lastSizeProbeMs <- 0;
+if(!("armPoseDirty" in SS2FA)) SS2FA.armPoseDirty <- false;
+if(!("armBaseH" in SS2FA)) SS2FA.armBaseH <- 0;
+if(!("armBaseP" in SS2FA)) SS2FA.armBaseP <- 0;
+if(!("armBaseB" in SS2FA)) SS2FA.armBaseB <- 0;
+if(!("armBaseLoc" in SS2FA)) SS2FA.armBaseLoc <- vector(0.0, 0.0, 0.0);
+
+// Restore PlyrArm to its pre-Freelook pose (wrench frob-killer fix). State is
+// global so BOTH the melee viewmodel subclass and the always-running AimHandler
+// can trigger the restore — the subclass instance alone may not get a frame in
+// after Freelook turns off.
+function SS2FA_RestoreArmPose()
+{
+    if(!SS2FA.armPoseDirty) return;
+    SS2FA.armPoseDirty = false;
+    local playerArm = 0;
+    try { playerArm = Object.Named("PlyrArm"); } catch(e) { playerArm = 0; }
+    if(playerArm == 0) return;
+    try {
+        // Location is the property the melee path actually displaces each frame
+        // (it teleports PlyrArm to a world point; writeFacing=0 so HPB are NOT
+        // touched). Native does not reposition it back after we stop, so the arm
+        // stays parked across the engine's pick frustum -> nothing frobbable until
+        // a weapon re-equip rebuilds the arm. Restore Location (+ scale, + HPB for
+        // completeness) so native control resumes cleanly.
+        Property.Set(playerArm, "Position", "Location", SS2FA.armBaseLoc);
+        Property.Set(playerArm, "Position", "Heading", SS2FA.armBaseH);
+        Property.Set(playerArm, "Position", "Pitch", SS2FA.armBaseP);
+        Property.Set(playerArm, "Position", "Bank", SS2FA.armBaseB);
+        try { if(Property.Possessed(playerArm, "Scale")) Property.Set(playerArm, "Scale", "", vector(1.0, 1.0, 1.0)); } catch(eS) {}
+        if(SS2FA_GetInt("ss2fa_melee_pose_log", 0) != 0)
+            ::print("[SS2FA-MELEE] PlyrArm restored after Freelook loc=" + SS2FA_FormatVec(SS2FA.armBaseLoc));
+    } catch(eR) {}
+}
+
+// WRENCH FROB-KILLER FIX (2026-06-16, Cheat-Engine-confirmed): publish the active
+// melee viewmodel's object id so the DLL's native frob-pick hook can exclude it.
+// The wrench mesh (NDShockMeleeViewmodel) sits at screen-centre and, after Freelook,
+// is dragged into world-pick space -- the engine's built-in pick exclusion only
+// covers the player object, so the wrench then occludes EVERY frob. CE proof:
+// writing the viewmodel id into *(DAT_1414de720+0x20) made objUnderCursor flip from
+// the viewmodel to the keypad behind it. Excluding by id is clean and needs no
+// viewmodel rebuild. Pass 0 from non-melee viewmodels to clear. On-change only.
+function SS2FA_PublishMeleeVmObj(obj)
+{
+    if(!("meleeVmPublished" in SS2FA)) SS2FA.meleeVmPublished <- -1;
+    if(SS2FA.meleeVmPublished != obj){
+        SS2FA.meleeVmPublished = obj;
+        try { Debug.Command("set", "ss2fa_melee_vm_obj " + obj); } catch(ePub) {}
+    }
+}
 if(!("dbgViewFwd" in SS2FA)) SS2FA.dbgViewFwd <- null;
 if(!("dbgViewUp" in SS2FA)) SS2FA.dbgViewUp <- null;
 if(!("dbgAim" in SS2FA)) SS2FA.dbgAim <- null;
@@ -188,6 +240,94 @@ function SS2FA_CameraWorldAxis(localAxis, fallback)
         );
     } catch(e) {}
     return fallback;
+}
+
+// --- BUG 1 PROBE/FIX: reload animations -------------------------------------
+// The freelook viewmodel is a bare model clone (Object.Create(-1) with ModelName
+// only). The handmade reload anims move JointPos on the HIDDEN native viewmodel,
+// so they never show on the proxy. This logs the native viewmodel's JointPos
+// (set ss2fa_weapon_anim_probe 1) and, with ss2fa_weapon_anim_mirror 1, copies
+// them onto the proxy each frame so the reload animation plays on screen.
+function SS2FA_ProbeMirrorViewmodelJoints(vm, proxy)
+{
+    // mirror defaults ON: user-confirmed 2026-06-13 (reload J2 sweep 0 -> -2.0 -> 0
+    // mirrored onto the proxy plays the handmade reload animation correctly).
+    local probe = SS2FA_GetInt("ss2fa_weapon_anim_probe", 0) != 0;
+    local mirror = SS2FA_GetInt("ss2fa_weapon_anim_mirror", 1) != 0;
+    if(!probe && !mirror) return;
+    if(vm == null || vm == 0 || proxy == 0) return;
+    local hasVmJoints = false;
+    try { hasVmJoints = Property.Possessed(vm, "JointPos"); } catch(eP) {}
+    if(!hasVmJoints) {
+        if(probe){
+            local nowN = ShockGame.SimTime();
+            if(nowN - SS2FA.lastAnimProbeMs >= 200){
+                SS2FA.lastAnimProbeMs = nowN;
+                ::print("[SS2FA-ANIMPROBE] vm=" + vm + " has no JointPos (reload anim drives something else)");
+            }
+        }
+        return;
+    }
+    if(mirror){
+        try { if(!Property.Possessed(proxy, "JointPos")) Property.Add(proxy, "JointPos"); } catch(eA) {}
+    }
+    local vals = "";
+    for(local i = 1; i <= 6; i++){
+        local jn = "Joint " + i;
+        local v = null;
+        try { v = Property.Get(vm, "JointPos", jn); } catch(eG) { v = null; }
+        if(v == null) continue;
+        if(mirror){
+            try { Property.Set(proxy, "JointPos", jn, v); } catch(eS) {}
+        }
+        vals += " J" + i + "=" + format("%.3f", v.tofloat());
+    }
+    if(probe){
+        local now = ShockGame.SimTime();
+        if(now - SS2FA.lastAnimProbeMs >= 200){
+            SS2FA.lastAnimProbeMs = now;
+            ::print("[SS2FA-ANIMPROBE] vm=" + vm + " proxy=" + proxy + " mirror=" + (mirror ? "1" : "0") + vals);
+        }
+    }
+}
+
+// --- BUG 2 PROBE/FIX: selection-bracket sizing ------------------------------
+// The native brackets scale to the target's screen footprint; ours draw at a
+// fixed half_w/half_h. Project the object's bounding radius (PhysDims Size) to
+// screen via the two camera screen axes to recover the on-screen half-extents.
+// Logged via ss2fa_selection_size_probe; applied via ss2fa_selection_marker_autosize.
+function SS2FA_ObjectScreenHalfExtents(target, cx, cy, pos)
+{
+    if(pos == null) return null;
+    local r = -1.0;
+    try {
+        if(Property.Possessed(target, "PhysDims")){
+            local sz = Property.Get(target, "PhysDims", "Size");
+            if(sz != null){
+                local ax = sz.x < 0 ? -sz.x : sz.x;
+                local ay = sz.y < 0 ? -sz.y : sz.y;
+                local az = sz.z < 0 ? -sz.z : sz.z;
+                local mx = ax; if(ay > mx) mx = ay; if(az > mx) mx = az;
+                r = mx * 0.5;
+            }
+        }
+    } catch(eR) {}
+    if(r <= 0.01) r = SS2FA_GetFloat("ss2fa_selection_size_default_radius", 1.5);
+
+    local basis = SS2FA_FlatCameraScreenBasis();
+    local rx = int_ref(); local ry = int_ref();
+    local ux = int_ref(); local uy = int_ref();
+    local okR = false; local okU = false;
+    try { ShockOverlay.WorldToScreen(vector(pos.x + basis.right.x * r, pos.y + basis.right.y * r, pos.z + basis.right.z * r), rx, ry); okR = true; } catch(eWr) {}
+    try { ShockOverlay.WorldToScreen(vector(pos.x + basis.up.x * r, pos.y + basis.up.y * r, pos.z + basis.up.z * r), ux, uy); okU = true; } catch(eWu) {}
+    if(!okR && !okU) return null;
+    local hw = okR ? (rx.tointeger() - cx) : 0;
+    local hh = okU ? (uy.tointeger() - cy) : 0;
+    if(hw < 0) hw = -hw;
+    if(hh < 0) hh = -hh;
+    if(hw < 1 && hh >= 1) hw = hh;
+    if(hh < 1 && hw >= 1) hh = hw;
+    return { w = hw, h = hh, r = r };
 }
 
 function SS2FA_FlatCameraScreenBasis()
@@ -896,6 +1036,88 @@ function SS2FA_IsContainedObject(obj)
     return false;
 }
 
+// --- Frob Target Library families (docs/FROB_TARGET_LIBRARY.md) --------------
+// Some players reported missed frob targets (e.g. recharge stations whose
+// FrobInfo bits read 0 and whose name has no hint term). Archetype FAMILY
+// membership via Object.InheritsFrom is a strong second tier below FrobInfo and
+// above name hints. Revert knob: set ss2fa_selection_family_filter 0.
+function SS2FA_InheritsAny(obj, families)
+{
+    foreach(family in families){
+        try {
+            if(family.len() > 0 && Object.InheritsFrom(obj, family)) return family;
+        } catch(e) {}
+    }
+    return "";
+}
+
+function SS2FA_AllowFamilies()
+{
+    return [
+        "Usable Containers",
+        "Controllers",
+        "Recharging Station",
+        "Recharger_Button",
+        "Res_Station_Button",
+        "Trainers",
+        "Computers",
+        "RepBase",
+        "Replicator",
+        "Med Bed Stuff",
+        "Resurrection Station",
+        "Shuttle Launch Screen"
+    ];
+}
+
+function SS2FA_DenyFamilies()
+{
+    // Helper/viewmodel/effect trees that must never become a frob target.
+    return [
+        "NDShockGunViewmodel",
+        "NDShockMeleeViewmodel",
+        "NDRayTester",
+        "XYZ",
+        "RayPoint",
+        "Origin",
+        "ND-FleshTerrBulletHit",
+        "Lights",
+        "Monster Accessories",
+        "Network Avatar"
+    ];
+}
+
+function SS2FA_FamilyFilterOn()
+{
+    return SS2FA_GetInt("ss2fa_selection_family_filter", 1) != 0;
+}
+
+// PERF: family membership depends only on the object's ARCHETYPE, so cache the
+// verdict per archetype id. First sighting of an archetype pays the full
+// InheritsFrom sweep; every object after that is one Object.Archetype call and
+// a table lookup. Archetypes are static, so the cache never goes stale.
+if(!("famCache" in SS2FA)) SS2FA.famCache <- {};
+
+function SS2FA_FamilyVerdict(obj)
+{
+    local arch = 0;
+    try { arch = Object.Archetype(obj); } catch(e) { arch = 0; }
+    if(arch == 0) return { allow = "", deny = "" };
+    local key = arch.tostring();
+    if(key in SS2FA.famCache) return SS2FA.famCache[key];
+    local verdict = {
+        allow = SS2FA_InheritsAny(obj, SS2FA_AllowFamilies()),
+        deny = SS2FA_InheritsAny(obj, SS2FA_DenyFamilies())
+    };
+    SS2FA.famCache[key] <- verdict;
+    return verdict;
+}
+
+function SS2FA_AcceptedFamily(obj)
+{
+    if(!SS2FA_FamilyFilterOn()) return "";
+    return SS2FA_FamilyVerdict(obj).allow;
+}
+
 function SS2FA_SelectionReason(obj, requireSemantic)
 {
     try {
@@ -907,12 +1129,21 @@ function SS2FA_SelectionReason(obj, requireSemantic)
         return "reject_freelook_weapon_proxy";
     if(SS2FA_IsContainedObject(obj)) return "reject_contained";
     if(SS2FA_Blocked(obj)) return "reject_blockfrob";
+    // Helper/viewmodel/effect families must never frob (even in permissive mode).
+    if(SS2FA_FamilyFilterOn()){
+        local denyFam = SS2FA_FamilyVerdict(obj).deny;
+        if(denyFam.len() > 0) return "reject_family_" + denyFam;
+    }
     local blob = SS2FA_NameBlob(obj);
     if(SS2FA_TextContains(blob, [
         "sound", "ambient", "light", "decal", "fx_", "particle", "marker", "vhot",
         "window", "chair", "table", "desk"
     ])) return "reject_name_noise";
     if(SS2FA_FrobActionBits(obj) != 0) return "accept_frobinfo_action";
+    // Functional family membership (containers/controllers/stations/etc.): a strong
+    // accept above name hints — catches interactables FrobInfo alone misses.
+    local allowFam = SS2FA_AcceptedFamily(obj);
+    if(allowFam.len() > 0) return "accept_family_" + allowFam;
     if(SS2FA_TextContains(blob, [
         "switch", "button", "keypad", "reader", "slot", "card", "key", "corpse",
         "body", "weapon", "pistol", "ammo", "hypo", "log", "door", "container",
@@ -923,8 +1154,8 @@ function SS2FA_SelectionReason(obj, requireSemantic)
 
 function SS2FA_RayProbeScore(aim, obj, reach, radius, requireSemantic)
 {
-    local reason = SS2FA_SelectionReason(obj, requireSemantic);
-
+    // PERF: geometry first; classify only objects that pass it (the probe's
+    // reject diagnostics for out-of-cone objects just say behind/reach/radius).
     local pos = null;
     try { pos = Object.Position(obj); } catch(e) { return null; }
 
@@ -940,16 +1171,17 @@ function SS2FA_RayProbeScore(aim, obj, reach, radius, requireSemantic)
     local dz = pos.z - cz;
     local dist = sqrt(dx * dx + dy * dy + dz * dz);
 
-    local accepted = SS2FA_IsAcceptReason(reason);
+    local accepted = false;
+    local reason = "";
     if(along < 0.0){
-        accepted = false;
-        reason = "reject_behind:" + reason;
+        reason = "reject_behind";
     } else if(along > reach){
-        accepted = false;
-        reason = "reject_reach:" + reason;
+        reason = "reject_reach";
     } else if(dist > radius){
-        accepted = false;
-        reason = "reject_radius:" + reason;
+        reason = "reject_radius";
+    } else {
+        reason = SS2FA_SelectionReason(obj, requireSemantic);
+        accepted = SS2FA_IsAcceptReason(reason);
     }
 
     return {
@@ -964,9 +1196,9 @@ function SS2FA_RayProbeScore(aim, obj, reach, radius, requireSemantic)
 
 function SS2FA_RayScore(aim, obj, reach, radius, requireSemantic)
 {
-    local reason = SS2FA_SelectionReason(obj, requireSemantic);
-    if(!SS2FA_IsAcceptReason(reason)) return null;
-
+    // PERF: geometry gates FIRST. SelectionReason is expensive (name blobs,
+    // FrobInfo reads, Contains-link iteration, archetype family checks) and
+    // used to run for EVERY live object each scan tick — the main FPS drain.
     local pos = null;
     try { pos = Object.Position(obj); } catch(e) { return null; }
 
@@ -984,6 +1216,9 @@ function SS2FA_RayScore(aim, obj, reach, radius, requireSemantic)
     local dz = pos.z - cz;
     local dist = sqrt(dx * dx + dy * dy + dz * dz);
     if(dist > radius) return null;
+
+    local reason = SS2FA_SelectionReason(obj, requireSemantic);
+    if(!SS2FA_IsAcceptReason(reason)) return null;
 
     return {
         obj = obj,
@@ -1305,39 +1540,69 @@ function SS2FA_ProjectObjScreen(obj)
 
 function SS2FA_ScreenProbeScore(aim, obj, reticle, reach, radiusPx, requireSemantic, requireRendered)
 {
-    local reason = SS2FA_SelectionReason(obj, requireSemantic);
-    local accepted = SS2FA_IsAcceptReason(reason);
-
-    if(requireRendered){
-        try {
-            if(!Object.RenderedThisFrame(obj)){
-                accepted = false;
-                reason = "reject_not_rendered:" + reason;
-            }
-        } catch(e) {}
-    }
-
+    // PERF: cheap geometry/rendered gates first; SelectionReason (the expensive
+    // classification) runs only for objects already in the screen-probe cone.
     local screen = SS2FA_ProjectObjScreen(obj);
     if(screen == null) return null;
 
     local vx = screen.pos.x - aim.wox;
     local vy = screen.pos.y - aim.woy;
     local vz = screen.pos.z - aim.woz;
-    local along = vx * aim.wdx + vy * aim.wdy + vz * aim.wdz;
+    // BEHIND-TEST FIX (2026-06-13): use the PROVEN camera forward from
+    // Camera.GetFacing, not the published aim.wd. The raw DLL ray carries the
+    // known heading-dependent ~180deg view-frame reflection (the same one that
+    // sent raw projectile velocity backward), so at some facings every visible
+    // object scored along ~= -distance and the whole scan rejected as "behind"
+    // (proven: SELREJ keypad a=-3.34 / door a=-84.8 = their true distances).
+    // That was the directional right-side selection failure.
+    // ALONG-AXIS: project onto the camera forward. Tried alternatives and rejected
+    // them: raw aim.wd carried a heading-dependent ~180deg reflection (every object
+    // scored a<0); reticle-dir via ViewFrameAim compressed every score toward 0 and
+    // made valid targets flicker across the threshold. Camera-forward gives the
+    // widest, most stable separation -- the residual left/right issue is handled by
+    // the tolerant behind-test below, not by changing this axis.
+    local camBasis = SS2FA_FlatCameraScreenBasis();
+    local along = vx * camBasis.forward.x + vy * camBasis.forward.y + vz * camBasis.forward.z;
     local cameraDist = sqrt(vx * vx + vy * vy + vz * vz);
     local dx = screen.x - reticle.x;
     local dy = screen.y - reticle.y;
     local screenDist = sqrt(dx * dx + dy * dy);
 
-    if(along < 0.0){
-        accepted = false;
-        reason = "reject_behind:" + reason;
+    // BEHIND-TEST (right-side fix 2026-06-15): a hard a<0 cutoff wrongly drops a
+    // switch the reticle is clearly on -- in free-aim the head can face away from it,
+    // pushing camera-forward 'a' slightly negative even though it projects near the
+    // reticle and renders. Proven directional left/right failure: same Keypad
+    // accepted at a=+0.3..+3.3, rejected reject_behind at a=-0.25..-2.06. Objects
+    // truly behind the camera project to the WorldToScreen offscreen sentinel and
+    // fail the screen-distance test below regardless, so this only needs to drop
+    // things FAR behind the view plane. Allow a generous negative tolerance;
+    // live-tunable via `set ss2fa_selection_behind_tolerance <units>`.
+    local behindTol = SS2FA_GetFloat("ss2fa_selection_behind_tolerance", 4.0);
+    local accepted = false;
+    local reason = "";
+    if(along < -behindTol){
+        reason = "reject_behind";
     } else if(cameraDist > reach){
-        accepted = false;
-        reason = "reject_reachdist:" + reason;
+        reason = "reject_reachdist";
     } else if(screenDist > radiusPx){
-        accepted = false;
-        reason = "reject_screen:" + reason;
+        reason = "reject_screen";
+    } else {
+        // Close-range exemption for the rendered gate: point-blank wall fixtures
+        // (switches/keypads) can read as not-rendered-this-frame (engine culling
+        // quirk at very short range, reported as DIRECTIONAL — right-of-body
+        // fails where the weapon viewmodel sits). Within rendered_min_dist the
+        // object is plainly in front of the player; trust geometry over the
+        // rendered flag there.
+        local rendered = true;
+        if(requireRendered && cameraDist > SS2FA_GetFloat("ss2fa_selection_rendered_min_dist", 3.0)){
+            try { rendered = Object.RenderedThisFrame(obj); } catch(e) { rendered = false; }
+        }
+        if(!rendered){
+            reason = "reject_not_rendered";
+        } else {
+            reason = SS2FA_SelectionReason(obj, requireSemantic);
+            accepted = SS2FA_IsAcceptReason(reason);
+        }
     }
 
     return {
@@ -1547,12 +1812,12 @@ class SS2FA.SelectionHandler
         ShockOverlay.DrawString("]", screen.x + 12, screen.y - 8);
     }
 
-    function DrawNativeBracketMarker(screen)
+    function DrawNativeBracketMarker(screen, halfWIn = 0, halfHIn = 0)
     {
         if(!ResolveBracketBitmaps()) return false;
 
-        local halfW = SS2FA_GetInt("ss2fa_selection_debug_marker_half_w_px", 48);
-        local halfH = SS2FA_GetInt("ss2fa_selection_debug_marker_half_h_px", 32);
+        local halfW = halfWIn > 0 ? halfWIn : SS2FA_GetInt("ss2fa_selection_debug_marker_half_w_px", 48);
+        local halfH = halfHIn > 0 ? halfHIn : SS2FA_GetInt("ss2fa_selection_debug_marker_half_h_px", 32);
         if(halfW < 8) halfW = 8;
         if(halfH < 8) halfH = 8;
         if(halfW > 256) halfW = 256;
@@ -1581,8 +1846,28 @@ class SS2FA.SelectionHandler
         local style = SS2FA_GetInt("ss2fa_selection_debug_marker_style", 2);
         local drewNative = false;
 
+        // BUG 2: optionally size the brackets to the target's on-screen footprint.
+        local probeSize = SS2FA_GetInt("ss2fa_selection_size_probe", 0) != 0;
+        local autoSize = SS2FA_GetInt("ss2fa_selection_marker_autosize", 0) != 0;
+        local ext = (probeSize || autoSize) ? SS2FA_ObjectScreenHalfExtents(target, screen.x, screen.y, screen.pos) : null;
+        local useW = (autoSize && ext != null) ? ext.w : 0;
+        local useH = (autoSize && ext != null) ? ext.h : 0;
+        if(probeSize && ext != null){
+            local nowP = ShockGame.SimTime();
+            if(nowP - SS2FA.lastSizeProbeMs >= 1000){
+                SS2FA.lastSizeProbeMs = nowP;
+                ::print("[SS2FA-SELSIZE] obj=" + target
+                    + " r=" + format("%.2f", ext.r)
+                    + " autoHalf=(" + ext.w + "," + ext.h + ")"
+                    + " fixedHalf=(" + SS2FA_GetInt("ss2fa_selection_debug_marker_half_w_px", 48)
+                    + "," + SS2FA_GetInt("ss2fa_selection_debug_marker_half_h_px", 32) + ")"
+                    + " applied=" + (autoSize ? "1" : "0")
+                    + " name=" + SS2FA_ObjName(target));
+            }
+        }
+
         try {
-            if(style == 2) drewNative = DrawNativeBracketMarker(screen);
+            if(style == 2) drewNative = DrawNativeBracketMarker(screen, useW, useH);
             if(!drewNative) DrawLegacyMarker(screen);
         } catch(e) {
             if(!m_markerFailureLogged){
@@ -1621,6 +1906,31 @@ class SS2FA.SelectionHandler
 
     function OnFrameUpdate(deltaTime)
     {
+        // One-shot classification dump: `set ss2fa_explain <objid>` prints the
+        // complete verdict for any object (works in or out of Freelook), then
+        // self-clears. Ported from SS2VR's v1.69 explain probe.
+        local explainObj = SS2FA_GetInt("ss2fa_explain", 0);
+        if(explainObj > 0){
+            try { Debug.Command("set", "ss2fa_explain 0"); } catch(eEx) {}
+            local fam = SS2FA_FamilyVerdict(explainObj);
+            local exists = false;
+            try { exists = Object.Exists(explainObj); } catch(eEx2) {}
+            local rendered = false;
+            try { rendered = Object.RenderedThisFrame(explainObj); } catch(eEx3) {}
+            ::print("[SS2FA-EXPLAIN] obj=" + explainObj
+                + " exists=" + (exists ? "1" : "0")
+                + " name=" + SS2FA_ObjName(explainObj)
+                + " arch=" + SS2FA_ArchName(explainObj)
+                + " familyAllow=" + fam.allow
+                + " familyDeny=" + fam.deny
+                + " frobBits=" + SS2FA_FrobActionBits(explainObj)
+                + " frob=" + SS2FA_FrobInfoText(explainObj)
+                + " blockfrob=" + (SS2FA_Blocked(explainObj) ? "1" : "0")
+                + " contained=" + (SS2FA_IsContainedObject(explainObj) ? "1" : "0")
+                + " rendered=" + (rendered ? "1" : "0")
+                + " reasonSemantic=" + SS2FA_SelectionReason(explainObj, true)
+                + " reasonPermissive=" + SS2FA_SelectionReason(explainObj, false));
+        }
         if(SS2FA_GetInt("ss2fa_selection_semantic", 0) == 0){
             ClearTarget();
             return;
@@ -1644,8 +1954,15 @@ class SS2FA.SelectionHandler
         }
 
         local target = (m_lastScan != null) ? m_lastScan.target : 0;
+        // Publish on change always; the periodic keepalive runs ONLY for a live
+        // target (the DLL expires semantic targets after selection_semantic_max_age_ms,
+        // so an active target must refresh). target==0 publishes once — the old
+        // unconditional 160ms republish of "0" was a constant Debug.Command console
+        // flood (2 echo lines each) that dragged the framerate, same failure class
+        // as the SS2VR ss2vr_hl_hp spam.
         local publishInterval = SS2FA_GetInt("ss2fa_selection_semantic_publish_interval_ms", 160);
-        if(target != m_lastTarget || publishInterval <= 0 || now - m_lastPublishTime >= publishInterval){
+        if(target != m_lastTarget
+            || (target != 0 && (publishInterval <= 0 || now - m_lastPublishTime >= publishInterval))){
             SS2FA_PublishSelectionTarget(target);
             m_lastPublishTime = now;
         }
@@ -1667,6 +1984,7 @@ class SS2FA.SelectionHandler
                 + " ray=(" + format("%.2f", aim.wdx) + "," + format("%.2f", aim.wdy) + "," + format("%.2f", aim.wdz) + ")"
                 + " name=" + SS2FA_ObjName(target)
                 + " arch=" + SS2FA_ArchName(target)
+                + " family=" + SS2FA_FamilyVerdict(target).allow
                 + " frob=" + SS2FA_FrobInfoText(target));
             if(summary.len() > 0) ::print("[SS2FA-SELSCAN] " + summary);
             if(rejectSummary.len() > 0) ::print("[SS2FA-SELREJ] " + rejectSummary);
@@ -1970,6 +2288,7 @@ class SS2FAGunViewmodel extends NDShockGunViewmodel
     function OnFrameUpdate()
     {
         SS2FA.effectViewmodelActive = true;
+        SS2FA_PublishMeleeVmObj(0);  // not a melee weapon -> clear the melee-VM frob exclusion
         if(!m_ss2faLoggedEffect && SS2FA_GetInt("ss2fa_weapon_effect_log", 0) != 0){
             m_ss2faLoggedEffect = true;
             ::print("[SS2FA-FX] Freelook viewmodel subclass active");
@@ -1979,6 +2298,20 @@ class SS2FAGunViewmodel extends NDShockGunViewmodel
         local aim = (mode == 5) ? SS2FA_ReadAim() : null;
         if(mode != 5 || aim == null){
             base.OnFrameUpdate();
+            // weapon_center in NORMAL (non-Freelook) mode: the native rig just wrote
+            // the right-justified CameraObj.Offset; re-zero its lateral (y) component
+            // so the gun sits on the screen centerline (SS1 style). Mirrors the
+            // free-aim proxy centering (ApplyWorldProxy zeros off.y the same way).
+            // Forward (x) and vertical/bob (z) are kept, so sway/bob still read.
+            if(SS2FA_GetInt("ss2fa_weapon_center", 0) != 0){
+                try {
+                    if(Property.Possessed(self, "CameraObj")){
+                        local noff = Property.Get(self, "CameraObj", "Offset");
+                        if(noff.y != 0.0)
+                            Property.Set(self, "CameraObj", "Offset", vector(noff.x, 0.0, noff.z));
+                    }
+                } catch(eWC) {}
+            }
             return;
         }
 
@@ -2058,16 +2391,32 @@ class SS2FAMeleeViewmodel extends NDShockMeleeViewmodel
     m_ss2faLoggedMelee = false;
     m_ss2faLoggedNoArm = false;
     m_ss2faLastPoseLogTime = 0;
+    m_ss2faPoseDirty = false;
+    m_ss2faBaseHeading = 0;
+    m_ss2faBasePitch = 0;
+    m_ss2faBaseBank = 0;
+
+    // FROB-KILLER FIX (2026-06-13): we write PlyrArm Heading/Pitch/Bank (+Scale),
+    // but native NDShockMeleeViewmodel only rewrites Location — so our last
+    // freelook orientation STUCK on the arm after exit, leaving the arm mesh
+    // sprawled across the engine's pick frustum. Result: native frob picked
+    // nothing (idle probe: object=0x0) with the WRENCH equipped until a weapon
+    // re-equip rebuilt the arm. Restore the captured pose once on exit.
+    function SS2FARestoreArmPose()
+    {
+        SS2FA_RestoreArmPose();
+    }
 
     function OnFrameUpdate()
     {
         base.OnFrameUpdate();
+        SS2FA_PublishMeleeVmObj(self);  // exclude our own wrench mesh from the native frob pick
 
-        if(SS2FA_GetInt("ss2fa_melee_enable", 1) == 0) return;
-        if(SS2FA_GetInt("ss2fa_weapon_follow_mode", 1) != 7) return;
+        if(SS2FA_GetInt("ss2fa_melee_enable", 1) == 0) { SS2FARestoreArmPose(); return; }
+        if(SS2FA_GetInt("ss2fa_weapon_follow_mode", 1) != 7) { SS2FARestoreArmPose(); return; }
 
         local aim = SS2FA_ReadAim();
-        if(aim == null) return;
+        if(aim == null) { SS2FARestoreArmPose(); return; }
 
         local playerArm = 0;
         try { playerArm = Object.Named("PlyrArm"); } catch(eArm) { playerArm = 0; }
@@ -2214,6 +2563,15 @@ class SS2FAMeleeViewmodel extends NDShockMeleeViewmodel
             }
         } catch(eScale) {}
 
+        if(!SS2FA.armPoseDirty){
+            try {
+                SS2FA.armBaseLoc = Property.Get(playerArm, "Position", "Location");
+                SS2FA.armBaseB = Property.Get(playerArm, "Position", "Bank");
+                SS2FA.armBaseP = Property.Get(playerArm, "Position", "Pitch");
+                SS2FA.armBaseH = Property.Get(playerArm, "Position", "Heading");
+                SS2FA.armPoseDirty = true;
+            } catch(eCap) {}
+        }
         try {
             Property.Set(playerArm, "Position", "Location", worldPos);
             if(writeFacing){
@@ -2386,6 +2744,9 @@ class SS2FA.AimHandler
     m_mode5RecreateTried = false;
     m_effectRecreateTried = false;
     m_meleeRecreateTried = false;
+    m_recenterActive = false;
+    m_recenterStart = 0;
+    m_recenterLastAim = null;
     m_worldProxyObj = 0;
     m_worldProxyModel = "";
     m_worldProxyLogged = false;
@@ -2618,6 +2979,37 @@ class SS2FA.AimHandler
         return o;
     }
 
+    // Feature: on free-aim release, keep the gun proxy alive briefly and re-drive
+    // it with a decaying aim so it eases back to neutral instead of snapping off.
+    // Returns true while a recenter is in progress (caller must NOT destroy the
+    // proxy); false when idle/done/disabled (caller destroys as usual).
+    // Off by default: ss2fa_weapon_recenter_on_release / ss2fa_weapon_recenter_ms.
+    function WeaponRecenterTick(now)
+    {
+        if(SS2FA_GetInt("ss2fa_weapon_recenter_on_release", 0) == 0) return false;
+        if(SS2FA_GetInt("ss2fa_weapon_follow_mode", 1) != 7) return false;
+        if(m_recenterLastAim == null) return false;
+        local durMs = SS2FA_GetFloat("ss2fa_weapon_recenter_ms", 150.0);
+        if(durMs <= 0.0) return false;
+        if(!m_recenterActive){ m_recenterActive = true; m_recenterStart = now; }
+        local t = (now - m_recenterStart) / durMs;
+        if(t >= 1.0){ m_recenterActive = false; m_recenterLastAim = null; return false; }
+        local wh = SS2FA_FindWeaponHandler();
+        if(wh == null || !("m_viewmodelObject" in wh)){ m_recenterActive = false; m_recenterLastAim = null; return false; }
+        local vm = wh.m_viewmodelObject;
+        local exists = false;
+        try { exists = (vm != 0 && Object.Exists(vm)); } catch(eEx) { exists = false; }
+        if(!exists){ m_recenterActive = false; m_recenterLastAim = null; return false; }
+        local k = 1.0 - t; // decay the aim offset toward neutral
+        local lerped = clone m_recenterLastAim;
+        lerped.dyaw = m_recenterLastAim.dyaw * k;
+        lerped.dpitch = m_recenterLastAim.dpitch * k;
+        local ok = false;
+        try { ok = ApplyWorldProxy(vm, lerped, now, wh); } catch(eAp) { ok = false; }
+        if(!ok){ m_recenterActive = false; m_recenterLastAim = null; return false; }
+        return true;
+    }
+
     function ApplyWorldProxy(vm, aim, now, wh)
     {
         local model = "";
@@ -2635,9 +3027,13 @@ class SS2FA.AimHandler
         if(proxy == 0) return false;
 
         local off = ReadLiveOffset(vm);
+        // Feature: ss2fa_weapon_center=1 puts the gun on the screen centerline
+        // (System Shock 1 style) instead of the right-justified default by zeroing
+        // the lateral (left/right) component.
+        local centerWeapon = SS2FA_GetInt("ss2fa_weapon_center", 0) != 0;
         local localPos = vector(
             off.x + SS2FA_GetFloat("ss2fa_weapon_proxy_forward", 0.0),
-            off.y + SS2FA_GetFloat("ss2fa_weapon_proxy_left", 0.0),
+            centerWeapon ? 0.0 : (off.y + SS2FA_GetFloat("ss2fa_weapon_proxy_left", 0.0)),
             off.z + SS2FA_GetFloat("ss2fa_weapon_proxy_up", 0.0)
         );
         HideNativeViewmodel(vm);
@@ -2645,6 +3041,7 @@ class SS2FA.AimHandler
         local k = SS2FA_GetFloat("ss2fa_weapon_proxy_scale", 1.0);
         if(k <= 0.0) k = 1.0;
         try { Property.Set(proxy, "Scale", "", vector(k, k, k)); } catch(eS) {}
+        SS2FA_ProbeMirrorViewmodelJoints(vm, proxy);
 
         local worldPos = Camera.CameraToWorld(localPos);
         local facingMode = SS2FA_GetInt("ss2fa_weapon_proxy_facing_mode", 0);
@@ -2989,14 +3386,25 @@ class SS2FA.AimHandler
         if(SS2FA_GetInt("ss2fa_enable", 1) == 0){
             SetNativeCrosshairHidden(false);
             DestroyWorldProxy();
+            SS2FA_RestoreArmPose();
             return;
         }
         local aim = SS2FA_ReadAim();
         if(aim == null){
-            SetNativeCrosshairHidden(false);
-            DestroyWorldProxy();
+            // Feature: optionally keep the crosshair hidden when NOT free-aiming
+            // (hipfire / no-reticle style). Off by default; the mod-disabled path
+            // above always restores it.
+            local hideIdle = SS2FA_GetInt("ss2fa_hide_crosshair_idle", 0) != 0 && SS2FA_GameplayHudMode();
+            SetNativeCrosshairHidden(hideIdle);
+            // Feature: lerp the weapon back to neutral over a short window on release
+            // instead of snapping. Keeps the proxy alive and re-drives it with a
+            // decaying aim; when done (or disabled) the proxy is destroyed as usual.
+            if(!WeaponRecenterTick(now)) DestroyWorldProxy();
+            SS2FA_RestoreArmPose();
             return;
         }
+        m_recenterActive = false;
+        m_recenterLastAim = aim;
         try {
             if(!m_loggedAim){
                 if(SS2FA_GetInt("ss2fa_aim_log", 0) != 0)

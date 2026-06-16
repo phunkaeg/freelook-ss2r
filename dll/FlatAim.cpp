@@ -27,6 +27,9 @@ namespace {
 // ---- confirmed RVAs (added to GetModuleHandle(nullptr)) ----
 constexpr uintptr_t kRvaPlayerTurnTilt        = 0x5126E0;  // FUN_1405126e0
 constexpr uintptr_t kRvaKexSetConfigRaw       = 0x8D2C20;  // FUN_1408d2c20 (console "set")
+constexpr uintptr_t kRvaSetCommand            = 0x308A20;  // FUN_140308a20: interactive "set" command handler (echoes "setting '%s' to '%s'")
+constexpr uintptr_t kRvaSetFromString         = 0x3AE680;  // FUN_1403ae680: set-cvar-from-string (exec/config path), same echo
+constexpr uintptr_t kRvaCommandArgGlobal      = 0x131A790; // DAT_14131a790: current command context; arg C-string at [*global + 0x10]
 constexpr uintptr_t kRvaCurrentPositionObject = 0x13BC4D0; // DAT_1413bc4d0
 constexpr uintptr_t kRvaPickCamOrigin         = 0x1348E68; // DAT_141348e68 (xyz floats)
 constexpr uintptr_t kRvaMouseTurnAccumulator  = 0x133F168; // yaw delta consumed by PlayerTurnTilt
@@ -57,6 +60,7 @@ constexpr int       kEdgePanPressAlways       = 0;
 constexpr int       kEdgePanPressOff          = 1;
 constexpr int       kEdgePanPressToggle       = 2;
 constexpr int       kEdgePanPressHoldLock     = 3;
+constexpr int       kEdgePanPressHold         = 4;  // static by default; pan only WHILE the key is held
 
 constexpr uint8_t kPlayerTurnTiltPrologue[] = {
     0x48, 0x89, 0x5C, 0x24, 0x10, 0x55, 0x56, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x30
@@ -66,6 +70,16 @@ constexpr uint8_t kKexSetConfigRawPrologue[] = {
 };
 constexpr uint8_t kHoverCandidatePrologue[] = {
     0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48, 0x83, 0xEC, 0x40
+};
+// "set" command handler: PUSH RBX; SUB RSP,0xC0; MOV RAX,[rip ...]. Stop the
+// signature before the rip-relative displacement (the only byte run that can
+// drift between builds).
+constexpr uint8_t kSetCommandPrologue[] = {
+    0x40, 0x53, 0x48, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x05
+};
+// set-cvar-from-string: PUSH RBX; SUB RSP,0x90; CMP byte[RCX],0; MOV RBX,RCX.
+constexpr uint8_t kSetFromStringPrologue[] = {
+    0x40, 0x53, 0x48, 0x81, 0xEC, 0x90, 0x00, 0x00, 0x00, 0x80, 0x39, 0x00, 0x48, 0x8B, 0xD9
 };
 
 struct ShockOverlayRectRaw {
@@ -78,14 +92,20 @@ static_assert(sizeof(ShockOverlayRectRaw) == 8, "Shock overlay rects are packed 
 
 using PlayerTurnTiltFn  = uint64_t(__fastcall*)(int*, int);
 using KexSetConfigRawFn = void(__fastcall*)(const char*, int, char*);
-using HoverCandidateFn  = void(__fastcall*)(uint32_t, void*, uint32_t);
+using HoverCandidateFn  = uint64_t(__fastcall*)(uint32_t, void*, uint32_t);
+using SetCommandFn      = void(__fastcall*)(void*);
+using SetFromStringFn   = void(__fastcall*)(char*);
 
 PlayerTurnTiltFn g_realTurnTilt = nullptr;
 KexSetConfigRawFn g_realKexSetConfigRaw = nullptr;
 HoverCandidateFn g_realHoverCandidate = nullptr;
+SetCommandFn g_realSetCommand = nullptr;
+SetFromStringFn g_realSetFromString = nullptr;
 uint8_t* g_base = nullptr;
 bool g_configOk = false;
 bool g_configHookInstalled = false;
+int  g_suppressBridgeEcho = 1;  // 1 = drop console echo for the high-freq ss2fa_* bridge publishes (alive/hl/canvas)
+int  g_meleeVmExclude = 1;      // 1 = exclude the player's melee viewmodel from the native frob pick (wrench frob-killer fix)
 
 std::atomic<bool> g_freeAim{false};
 bool g_wasActive = false;
@@ -99,6 +119,7 @@ ULONGLONG g_lastSelectionLogMs = 0;
 int32_t g_lastLoggedObject = -1;
 int32_t g_lastLoggedFrob = -1;
 std::atomic<int32_t> g_semanticTarget{0};
+std::atomic<int32_t> g_meleeViewmodelObj{0};  // script-published melee viewmodel obj; excluded from native frob pick
 std::atomic<ULONGLONG> g_semanticTargetMs{0};
 std::atomic<ULONGLONG> g_squirrelAliveMs{0};
 std::atomic<int> g_squirrelCanvasW{0};
@@ -107,6 +128,9 @@ std::atomic<ULONGLONG> g_squirrelCanvasMs{0};
 ULONGLONG g_lastSemanticLogMs = 0;
 int32_t g_lastLoggedSemanticTarget = -1;
 int32_t g_lastWrittenSemanticTarget = -1;
+bool g_wroteSemanticEver = false;     // we forced the engine hover/frob globals this session
+bool g_wroteNativeCursorEver = false; // we forced the kex cursor position this session
+std::atomic<bool> g_nativeReticleFallback{false}; // when scan is empty, leave engine's reticle pick instead of forcing 0
 ULONGLONG g_lastBridgeWaitLogMs = 0;
 ULONGLONG g_lastConfigBridgeDisabledLogMs = 0;
 ULONGLONG g_lastNativeCursorLogMs = 0;
@@ -140,6 +164,8 @@ int   g_edgePanEnabled = 1;
 int   g_edgePanVk = VK_F6;
 int   g_edgePanPressType = kEdgePanPressAlways;
 bool  g_edgePanToggleActive = true;
+int   g_edgePanMouseDelta = 0;          // at a clamped reticle edge, add the lost mouse delta to the turn
+float g_edgePanMouseDeltaGain = 1.0f;   // scale for that reclaimed mouse-delta turn
 bool  g_edgePanPrevDown = false;
 float g_edgePanMarginX = 0.12f;
 float g_edgePanMarginY = 0.12f;
@@ -190,6 +216,10 @@ int   g_weaponEffectRecreate = 1;
 int   g_weaponEffectLog = 0;
 int   g_weaponProxyPivotEnable = 1;
 int   g_weaponViewRotate = 1;  // 0 = gun model holds its neutral (view-centered) pose; aim/projectiles still track
+int   g_hideCrosshairIdle = 0;        // hide the crosshair when NOT free-aiming
+int   g_weaponCenter = 0;             // gun on screen centerline (SS1 style) vs right-justified
+int   g_weaponRecenterOnRelease = 0;  // ease gun back to neutral on free-aim release
+int   g_weaponRecenterMs = 150;       // duration of that ease-back
 int   g_weaponProxyPivotAllWeapons = 1;
 float g_weaponProxyPivotLongForward = -0.75f;
 float g_weaponProxyPivotLongLeft = 0.0f;
@@ -234,7 +264,7 @@ bool  g_nativeHudReticle = true;
 bool  g_nativeHudHideOriginal = true;
 float g_nativeHudReticleOffsetX = 0.0f;
 float g_nativeHudReticleOffsetY = 0.0f;
-int   g_nativeCrosshairRectProbe = 1;
+int   g_nativeCrosshairRectProbe = 0;  // dev diagnostic; off by default (enable via native_crosshair_rect_probe=1)
 int   g_nativeCrosshairRectProbeIntervalMs = 1000;
 bool  g_selection = false;
 bool  g_selectionLog = false;
@@ -374,6 +404,7 @@ int ParseEdgePanPressType(const char* text, int fallback) {
     if (_stricmp(text, "off") == 0 || _stricmp(text, "disabled") == 0) return kEdgePanPressOff;
     if (_stricmp(text, "toggle") == 0) return kEdgePanPressToggle;
     if (_stricmp(text, "hold") == 0 || _stricmp(text, "hold_lock") == 0 || _stricmp(text, "lock_hold") == 0) return kEdgePanPressHoldLock;
+    if (_stricmp(text, "hold_pan") == 0 || _stricmp(text, "pan_hold") == 0 || _stricmp(text, "momentary") == 0) return kEdgePanPressHold;
     return fallback;
 }
 
@@ -387,6 +418,7 @@ const char* EdgePanPressTypeName(int mode) {
     case kEdgePanPressOff: return "off";
     case kEdgePanPressToggle: return "toggle";
     case kEdgePanPressHoldLock: return "hold_lock";
+    case kEdgePanPressHold: return "hold_pan";
     default: return "unknown";
     }
 }
@@ -466,6 +498,8 @@ void LoadIni() {
     g_edgePanVk = IniI("edge_pan_vk", g_edgePanVk);
     IniS("edge_pan_press_type", "always", pressBuf, sizeof(pressBuf));
     g_edgePanPressType = ParseEdgePanPressType(pressBuf, g_edgePanPressType);
+    g_edgePanMouseDelta = IniI("edge_pan_mouse_delta", g_edgePanMouseDelta) ? 1 : 0;
+    g_edgePanMouseDeltaGain = IniF("edge_pan_mouse_delta_gain", g_edgePanMouseDeltaGain);
     g_edgePanMarginX = IniF("edge_pan_margin_x", g_edgePanMarginX);
     g_edgePanMarginY = IniF("edge_pan_margin_y", g_edgePanMarginY);
     g_edgePanMaxYawAccum = IniF("edge_pan_max_yaw_accum", g_edgePanMaxYawAccum);
@@ -522,6 +556,12 @@ void LoadIni() {
     g_weaponEffectLog = IniI("weapon_effect_log", g_weaponEffectLog);
     g_weaponProxyPivotEnable = IniI("weapon_proxy_pivot_enable", g_weaponProxyPivotEnable);
     g_weaponViewRotate = IniI("weapon_view_rotate", g_weaponViewRotate);
+    g_hideCrosshairIdle = IniI("hide_crosshair_idle", g_hideCrosshairIdle) ? 1 : 0;
+    g_weaponCenter = IniI("weapon_center", g_weaponCenter) ? 1 : 0;
+    g_suppressBridgeEcho = IniI("suppress_bridge_echo", g_suppressBridgeEcho) ? 1 : 0;
+    g_meleeVmExclude = IniI("melee_vm_exclude", g_meleeVmExclude) ? 1 : 0;
+    g_weaponRecenterOnRelease = IniI("weapon_recenter_on_release", g_weaponRecenterOnRelease) ? 1 : 0;
+    g_weaponRecenterMs = IniI("weapon_recenter_ms", g_weaponRecenterMs);
     g_weaponProxyPivotAllWeapons = IniI("weapon_proxy_pivot_all_weapons", g_weaponProxyPivotAllWeapons);
     g_weaponProxyPivotLongForward = IniF("weapon_proxy_pivot_long_forward", g_weaponProxyPivotLongForward);
     g_weaponProxyPivotLongLeft = IniF("weapon_proxy_pivot_long_left", g_weaponProxyPivotLongLeft);
@@ -614,7 +654,7 @@ void LoadIni() {
     if (!std::isfinite(g_fovDeg)) g_fovDeg = 74.0f;
     g_fovDeg = std::max(30.0f, std::min(g_fovDeg, 140.0f));
     g_edgePanVk = std::max(1, std::min(g_edgePanVk, 0xFE));
-    if (g_edgePanPressType < kEdgePanPressAlways || g_edgePanPressType > kEdgePanPressHoldLock) {
+    if (g_edgePanPressType < kEdgePanPressAlways || g_edgePanPressType > kEdgePanPressHold) {
         g_edgePanPressType = kEdgePanPressAlways;
     }
     if (!g_edgePanEnabled) {
@@ -1356,6 +1396,7 @@ bool WriteFlatAimCursorForNativeCrosshair(const char* phase, int& reticleX, int&
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+    g_wroteNativeCursorEver = true;
 
     if (g_nativeCursorLog) {
         const ULONGLONG nowMs = GetTickCount64();
@@ -1395,6 +1436,7 @@ void WriteSemanticSelectionGlobals(const char* phase, int32_t target, const char
     }
 
     g_lastWrittenSemanticTarget = target;
+    g_wroteSemanticEver = true;
     LogNativeBracketSemanticProbe("semantic_write", target, reason);
 
     if (!g_selectionSemanticLog) return;
@@ -1419,14 +1461,33 @@ void ForceSemanticTargetForNativeSelection(const char* phase) {
     const ULONGLONG nowMs = GetTickCount64();
     const ULONGLONG targetMs = g_semanticTargetMs.load(std::memory_order_acquire);
 
+    // MINIMAL-TOUCH POLICY (2026-06-13): we used to write 0 into the engine
+    // hover/frob globals EVERY frame with no target. If the native picker keeps
+    // its own hover cache and only refreshes these globals on change, that
+    // 0-flood desyncs it — prime suspect for "objects not frobbable in normal
+    // mouselook after/with Freelook" reports. Now: a live target is forced while
+    // fresh; on losing it we write 0 exactly ONCE; otherwise the engine's own
+    // pick state is left alone.
+    // NOTE 2026-06-13: continuous 0-writes here are DELIBERATE while Freelook is
+    // on (this function is gated on it) — they suppress the engine's own
+    // center-screen pick so only the Freelook reticle selects (user request).
+    // The "nothing frobbable in normal mode" bug was the melee PlyrArm pose
+    // sticking (fixed in ss2fa.nut), not these writes; the exit path stays
+    // hands-off (no global writes after Freelook turns off).
+    // When our origin-based scan has no target, optionally LEAVE the engine's own
+    // pick at the reticle (we already wrote the reticle into the kex cursor) instead
+    // of forcing 0. This recovers native close-range frob (wall switches whose origin
+    // passes behind the eye and vanish from our scan) without re-enabling the
+    // center-screen pick. Default off; A/B via `set ss2fa_native_reticle_fallback 1`.
+    const bool reticleFallback = g_nativeReticleFallback.load(std::memory_order_acquire);
     if (target <= 0) {
-        WriteSemanticSelectionGlobals(phase, 0, "empty", 0);
+        if (!reticleFallback) WriteSemanticSelectionGlobals(phase, 0, "empty", 0);
         return;
     }
 
     const ULONGLONG ageMs = targetMs == 0 ? 0 : nowMs - targetMs;
     if (targetMs == 0 || ageMs > static_cast<ULONGLONG>(g_selectionSemanticMaxAgeMs)) {
-        WriteSemanticSelectionGlobals(phase, 0, "stale", ageMs);
+        if (!reticleFallback) WriteSemanticSelectionGlobals(phase, 0, "stale", ageMs);
         return;
     }
 
@@ -1495,7 +1556,22 @@ void LogSelectionState(uint32_t candidateObj, int reticleX, int reticleY, int pi
         frobTarget);
 }
 
-void __fastcall Hook_HoverCandidate(uint32_t objId, void* arg2, uint32_t arg3) {
+uint64_t __fastcall Hook_HoverCandidate(uint32_t objId, void* arg2, uint32_t arg3) {
+    // WRENCH FROB-KILLER FIX (2026-06-16, Cheat-Engine-confirmed): the player's melee
+    // viewmodel (wrench mesh) sits at screen-centre and, after Freelook, is dragged
+    // into world pick space. The engine's built-in pick exclusion only covers the
+    // player object (*(DAT_1414de720+0x20)==1), so the wrench then occludes every frob
+    // (objUnderCursor stuck on the viewmodel). Mirror the engine's own skip (return 1)
+    // for our viewmodel so it is never committed as a frob candidate. Cheap, runs first.
+    const int32_t vmObj = g_meleeViewmodelObj.load(std::memory_order_relaxed);
+    if (g_meleeVmExclude && vmObj != 0 && objId == static_cast<uint32_t>(vmObj)) {
+        return 1;
+    }
+
+    // Legacy selection / native-bracket-probe instrumentation (unchanged; only runs
+    // when those features are enabled -- the hook may now also be installed purely for
+    // the exclusion above, in which case none of the below executes).
+    const bool instrument = g_selection || g_nativeBracketProbe;
     NativePickState before;
     if (g_nativeBracketProbe) {
         ReadNativePickState(before);
@@ -1505,10 +1581,14 @@ void __fastcall Hook_HoverCandidate(uint32_t objId, void* arg2, uint32_t arg3) {
     int reticleY = -1;
     int readBackX = -1;
     int readBackY = -1;
-    const bool wroteCursor = WriteFlatAimCursorForNativePick(reticleX, reticleY, readBackX, readBackY);
+    bool wroteCursor = false;
+    if (instrument) {
+        wroteCursor = WriteFlatAimCursorForNativePick(reticleX, reticleY, readBackX, readBackY);
+    }
 
+    uint64_t result = 1;
     if (g_realHoverCandidate) {
-        g_realHoverCandidate(objId, arg2, arg3);
+        result = g_realHoverCandidate(objId, arg2, arg3);
     }
 
     if (g_nativeBracketProbe) {
@@ -1522,6 +1602,7 @@ void __fastcall Hook_HoverCandidate(uint32_t objId, void* arg2, uint32_t arg3) {
     if (wroteCursor) {
         LogSelectionState(objId, reticleX, reticleY, readBackX, readBackY);
     }
+    return result;
 }
 
 bool SafeConfigNameEquals(const char* name, const char* expected) {
@@ -1568,6 +1649,18 @@ bool CaptureFlatAimPrivateConfig(const char* name, const char* value) {
         g_squirrelAliveMs.store(GetTickCount64(), std::memory_order_release);
         return true;
     }
+    if (SafeConfigNameEquals(name, "ss2fa_native_reticle_fallback")) {
+        int v = 0;
+        __try { if (value) v = std::atoi(value); } __except (EXCEPTION_EXECUTE_HANDLER) { v = 0; }
+        g_nativeReticleFallback.store(v != 0, std::memory_order_release);
+        return true;
+    }
+    if (SafeConfigNameEquals(name, "ss2fa_melee_vm_obj")) {
+        int v = 0;
+        __try { if (value) v = std::atoi(value); } __except (EXCEPTION_EXECUTE_HANDLER) { v = 0; }
+        g_meleeViewmodelObj.store(v, std::memory_order_release);
+        return true;
+    }
     if (SafeConfigNameEquals(name, "ss2fa_canvas")) {
         int w = 0;
         int h = 0;
@@ -1605,6 +1698,73 @@ void __fastcall Hook_KexSetConfigRaw(const char* name, int flags, char* value) {
     if (g_realKexSetConfigRaw) {
         g_realKexSetConfigRaw(name, flags, value);
     }
+}
+
+// ---- ss2fa_* console echo suppressor --------------------------------------
+// The Squirrel side talks to this DLL via Debug.Command("set", "ss2fa_x v"). The
+// engine's two `set` paths (FUN_140308a20 interactive / FUN_1403ae680 from-string)
+// each echo TWO console lines per call ("setting 'x' to 'v'" + "STATUS: Config
+// variable set."). For the high-frequency bridge lanes that is pure spam that
+// wipes the 1024-line console ring and drags the framerate (docs/FAILURE_REGISTRY
+// "any script lane may not exceed ~1 console line/s"). We hook both `set` paths,
+// capture those specific writes ourselves, and skip the echoing original. Every
+// other set (user-typed, one-shot ss2fa_ diagnostics) passes through untouched.
+
+bool IsSpammyBridgeVar(const char* name) {
+    return SafeConfigNameEquals(name, "ss2fa_alive")
+        || SafeConfigNameEquals(name, "ss2fa_hl")
+        || SafeConfigNameEquals(name, "ss2fa_canvas");
+}
+
+// Split "name value" the way the engine's set handlers do (%63s name, then the
+// remainder past the leading whitespace as the value). Returns the value pointer
+// (into argStr; may be ""). nameOut is always NUL-terminated.
+const char* SplitSetArg(const char* argStr, char* nameOut, size_t nameCap) {
+    nameOut[0] = '\0';
+    if (!argStr || nameCap == 0) return "";
+    const char* p = argStr;
+    while (*p == ' ' || *p == '\t') ++p;
+    size_t n = 0;
+    while (*p && *p != ' ' && *p != '\t' && n + 1 < nameCap) nameOut[n++] = *p++;
+    nameOut[n] = '\0';
+    while (*p == ' ' || *p == '\t') ++p;
+    return p;
+}
+
+// True => this is one of our spammy bridge publishes: capture it and tell the
+// caller to skip the echoing original.
+bool TrySuppressBridgeSet(const char* argStr) {
+    if (!g_suppressBridgeEcho || !argStr) return false;
+    char name[64];
+    const char* value = SplitSetArg(argStr, name, sizeof(name));
+    if (name[0] == '\0' || !IsSpammyBridgeVar(name)) return false;
+    CaptureFlatAimPrivateConfig(name, value);  // keep the bridge state fresh
+    return true;                               // suppress: skip the echoing original
+}
+
+// FUN_1403ae680(char* argStr): the cvar string is the first parameter (RCX).
+void __fastcall Hook_SetFromString(char* argStr) {
+    if (TrySuppressBridgeSet(argStr)) return;
+    if (g_realSetFromString) g_realSetFromString(argStr);
+}
+
+// FUN_140308a20(cmdCtx): the interactive `set` handler reads its argument from the
+// engine's current-command global (DAT_14131a790); the arg C-string lives at
+// [*global + 0x10] (see FUN_14017d500). Read it best-effort under SEH -- a bad
+// read just means we don't suppress (the original still runs, nothing crashes).
+const char* ReadCurrentSetArg() {
+    __try {
+        void* ctx = *reinterpret_cast<void**>(g_base + kRvaCommandArgGlobal);
+        if (!ctx) return nullptr;
+        return *reinterpret_cast<const char**>(reinterpret_cast<uint8_t*>(ctx) + 0x10);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+void __fastcall Hook_SetCommand(void* cmdCtx) {
+    if (TrySuppressBridgeSet(ReadCurrentSetArg())) return;
+    if (g_realSetCommand) g_realSetCommand(cmdCtx);
 }
 
 bool CanPublishFlatAimConfig() {
@@ -1687,6 +1847,10 @@ void PublishSquirrelTunables() {
     SetRawConfigInt("ss2fa_weapon_effect_log", g_weaponEffectLog);
     SetRawConfigInt("ss2fa_weapon_proxy_pivot_enable", g_weaponProxyPivotEnable);
     SetRawConfigInt("ss2fa_weapon_view_rotate", g_weaponViewRotate);
+    SetRawConfigInt("ss2fa_hide_crosshair_idle", g_hideCrosshairIdle);
+    SetRawConfigInt("ss2fa_weapon_center", g_weaponCenter);
+    SetRawConfigInt("ss2fa_weapon_recenter_on_release", g_weaponRecenterOnRelease);
+    SetRawConfigInt("ss2fa_weapon_recenter_ms", g_weaponRecenterMs);
     SetRawConfigInt("ss2fa_weapon_proxy_pivot_all_weapons", g_weaponProxyPivotAllWeapons);
     SetRawConfigFloat("ss2fa_weapon_proxy_pivot_long_forward", g_weaponProxyPivotLongForward);
     SetRawConfigFloat("ss2fa_weapon_proxy_pivot_long_left", g_weaponProxyPivotLongLeft);
@@ -1754,6 +1918,30 @@ void ClearFreeAimRuntimeState() {
     g_cxInit = false;
 }
 
+// Undo our writes into the ENGINE's pick state when Freelook turns off. We force
+// the kex cursor position and the hover/frob globals while active; without this
+// restore they linger after exit, and if the native picker updates those globals
+// edge-triggered, a stale forced value can leave objects un-frobbable in normal
+// mouselook (reported 2026-06-13: keypad not frobbable outside Freelook).
+void RestoreNativePickStateAfterFreelook() {
+    // Cursor only. We deliberately do NOT touch the hover/frob globals here:
+    // zeroing them on exit (tried 2026-06-13) made native-mode frobbing WORSE
+    // (nothing frobbable), supporting the edge-triggered-picker theory — a
+    // forced 0 sticks until the picker's own hover changes. The once-only clear
+    // in ForceSemanticTargetForNativeSelection already handles target loss.
+    if (!g_base || !g_wroteNativeCursorEver) return;
+    __try {
+        const int cx = static_cast<int>(std::max(1.0f, g_screenW)) / 2;
+        const int cy = static_cast<int>(std::max(1.0f, g_screenH)) / 2;
+        *reinterpret_cast<int32_t*>(g_base + kRvaKexCursorXFixed) = cx << 16;
+        *reinterpret_cast<int32_t*>(g_base + kRvaKexCursorYFixed) = cy << 16;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    LogLine("!Freelook native cursor re-centered after freelook");
+    g_wroteNativeCursorEver = false;
+}
+
 void DeactivateFreeAim(const char* reason) {
     const bool wasActive = g_freeAim.exchange(false, std::memory_order_acq_rel);
     if (wasActive || g_wasActive) {
@@ -1761,6 +1949,7 @@ void DeactivateFreeAim(const char* reason) {
         g_needPublishInvalidAim.store(!published, std::memory_order_release);
     }
     ClearFreeAimRuntimeState();
+    RestoreNativePickStateAfterFreelook();
     if (wasActive) {
         LogLine("!Freelook OFF (%s)", reason ? reason : "unknown");
     }
@@ -1866,7 +2055,9 @@ bool BeginFreelookSession(const char* reason) {
 
 void PollEdgePanControl() {
     if (!g_freeAim.load(std::memory_order_relaxed)) return;
-    if (g_edgePanPressType != kEdgePanPressToggle && g_edgePanPressType != kEdgePanPressHoldLock) return;
+    if (g_edgePanPressType != kEdgePanPressToggle &&
+        g_edgePanPressType != kEdgePanPressHoldLock &&
+        g_edgePanPressType != kEdgePanPressHold) return;
     const bool down = (GetAsyncKeyState(g_edgePanVk) & 0x8000) != 0;
     if (g_edgePanPressType == kEdgePanPressToggle) {
         if (down && !g_edgePanPrevDown) {
@@ -1874,10 +2065,11 @@ void PollEdgePanControl() {
             LogLine("!Freelook edge-pan %s", g_edgePanToggleActive ? "unlocked" : "locked");
         }
     } else {
-        const bool active = !down;
+        // hold_lock: pan unless held (active = !down). hold_pan: pan ONLY while held (active = down).
+        const bool active = (g_edgePanPressType == kEdgePanPressHold) ? down : !down;
         if (active != g_edgePanToggleActive) {
             g_edgePanToggleActive = active;
-            LogLine("!Freelook edge-pan %s", g_edgePanToggleActive ? "unlocked" : "locked");
+            LogLine("!Freelook edge-pan %s", g_edgePanToggleActive ? "on" : "off");
         }
     }
     g_edgePanPrevDown = down;
@@ -1916,6 +2108,22 @@ void PollFreelookInput() {
 uint64_t __fastcall Hook_PlayerTurnTilt(int* cameraState, int dt) {
     PollFreelookInput();
     PollEdgePanControl();
+    // Read-only diagnostic: 1 Hz dump of the ENGINE's pick state while Freelook
+    // is OFF (cursor pos/mode + hover/frob globals). Ground truth for the
+    // "objects not frobbable in normal mouselook" reports — shows whether the
+    // native picker is repopulating these globals or they are stuck.
+    if (!g_freeAim.load(std::memory_order_relaxed)) {
+        static ULONGLONG lastIdlePickLogMs = 0;
+        const ULONGLONG idleNow = GetTickCount64();
+        if (idleNow - lastIdlePickLogMs >= 1000) {
+            lastIdlePickLogMs = idleNow;
+            NativePickState idle;
+            if (ReadNativePickState(idle)) {
+                LogLine("native_pick_idle cursor=(%d %d) mode=%d object=0x%X staging=0x%X frob=0x%X",
+                    idle.cursorX, idle.cursorY, idle.cursorMode, idle.object, idle.staging, idle.frob);
+            }
+        }
+    }
     if (g_freeAim.load(std::memory_order_relaxed) && !IsGameWindowForeground()) {
         DeactivateFreeAim("focus_lost");
     }
@@ -1947,8 +2155,15 @@ uint64_t __fastcall Hook_PlayerTurnTilt(int* cameraState, int dt) {
 
         RefreshDisplayFromSquirrelCanvas(true);
         if (!g_cxInit) { g_cx = g_screenW * 0.5f; g_cy = g_screenH * 0.5f; g_cxInit = true; }
-        g_cx = Clampf(g_cx + dYaw * g_sensX * g_yawSign, 0.0f, g_screenW - 1.0f);
-        g_cy = Clampf(g_cy + dPitch * g_sensY * g_pitchSign, 0.0f, g_screenH - 1.0f);
+        const float wantCx = g_cx + dYaw * g_sensX * g_yawSign;
+        const float wantCy = g_cy + dPitch * g_sensY * g_pitchSign;
+        g_cx = Clampf(wantCx, 0.0f, g_screenW - 1.0f);
+        g_cy = Clampf(wantCy, 0.0f, g_screenH - 1.0f);
+        // Mouse motion that pushes the reticle PAST the screen edge is normally lost
+        // to the clamp. Reclaim it: at a pinned edge, feed the overflow back as turn
+        // (in mouse-accumulator units = overflow_px / sens). Off by default.
+        const float clampOverflowYaw = (g_sensX != 0.0f) ? ((wantCx - g_cx) / g_sensX) : 0.0f;
+        const float clampOverflowPitch = (g_sensY != 0.0f) ? ((wantCy - g_cy) / g_sensY) : 0.0f;
         g_overlayCursorX.store(static_cast<int>(g_cx + 0.5f), std::memory_order_relaxed);
         g_overlayCursorY.store(static_cast<int>(g_cy + 0.5f), std::memory_order_relaxed);
         g_overlayActive.store(g_reticle || g_hideOriginal, std::memory_order_release);
@@ -1962,8 +2177,12 @@ uint64_t __fastcall Hook_PlayerTurnTilt(int* cameraState, int dt) {
         const bool edgePanActive = IsEdgePanActive();
         const float edgePressureX = edgePanActive ? EdgePressure(g_cx, g_screenW, g_edgePanMarginX, g_edgePanCurve) : 0.0f;
         const float edgePressureY = edgePanActive ? EdgePressure(g_cy, g_screenH, g_edgePanMarginY, g_edgePanCurve) : 0.0f;
-        const float edgePanYaw = edgePressureX * g_edgePanMaxYawAccum * g_edgePanYawSign;
-        const float edgePanPitch = edgePressureY * g_edgePanMaxPitchAccum * g_edgePanPitchSign;
+        float edgePanYaw = edgePressureX * g_edgePanMaxYawAccum * g_edgePanYawSign;
+        float edgePanPitch = edgePressureY * g_edgePanMaxPitchAccum * g_edgePanPitchSign;
+        if (edgePanActive && g_edgePanMouseDelta) {
+            edgePanYaw += clampOverflowYaw * g_edgePanMouseDeltaGain * g_edgePanYawSign;
+            edgePanPitch += clampOverflowPitch * g_edgePanMouseDeltaGain * g_edgePanPitchSign;
+        }
         if (edgePanActive && (fabsf(edgePanYaw) > 0.0001f || fabsf(edgePanPitch) > 0.0001f)) {
             if (!WriteAccum(edgePanYaw, edgePanPitch) && !g_loggedAccumReadFailure) {
                 g_loggedAccumReadFailure = true;
@@ -2091,6 +2310,32 @@ DWORD WINAPI InitThread(LPVOID) {
         }
     }
 
+    // Console echo suppressor for the high-frequency ss2fa_* bridge publishes.
+    // Hooks BOTH `set` code paths; each guarded by its own prologue (fail-closed:
+    // a mismatch just leaves that path's echo intact, never hooks garbage).
+    if (g_suppressBridgeEcho) {
+        void* setCmd = g_base + kRvaSetCommand;
+        if (!ReadCodeBytesMatch(reinterpret_cast<uint8_t*>(setCmd), kSetCommandPrologue, sizeof(kSetCommandPrologue))) {
+            LogLine("!Freelook: set-command prologue mismatch at %p; bridge echo NOT suppressed (set path)", setCmd);
+        } else if (MH_CreateHook(setCmd, &Hook_SetCommand, reinterpret_cast<void**>(&g_realSetCommand)) != MH_OK ||
+                   MH_EnableHook(setCmd) != MH_OK) {
+            LogLine("!Freelook: failed to hook set-command; bridge echo NOT suppressed (set path)");
+            g_realSetCommand = nullptr;
+        } else {
+            LogLine("Freelook: set-command echo suppressor installed (ss2fa_alive/hl/canvas)");
+        }
+        void* setStr = g_base + kRvaSetFromString;
+        if (!ReadCodeBytesMatch(reinterpret_cast<uint8_t*>(setStr), kSetFromStringPrologue, sizeof(kSetFromStringPrologue))) {
+            LogLine("!Freelook: set-from-string prologue mismatch at %p; that path not suppressed", setStr);
+        } else if (MH_CreateHook(setStr, &Hook_SetFromString, reinterpret_cast<void**>(&g_realSetFromString)) != MH_OK ||
+                   MH_EnableHook(setStr) != MH_OK) {
+            LogLine("!Freelook: failed to hook set-from-string; that path not suppressed");
+            g_realSetFromString = nullptr;
+        } else {
+            LogLine("Freelook: set-from-string echo suppressor installed");
+        }
+    }
+
     if (MH_CreateHook(tt, &Hook_PlayerTurnTilt, reinterpret_cast<void**>(&g_realTurnTilt)) != MH_OK ||
         MH_EnableHook(tt) != MH_OK) {
         LogLine("!Freelook: failed to hook PlayerTurnTilt");
@@ -2098,7 +2343,7 @@ DWORD WINAPI InitThread(LPVOID) {
     }
 
     void* hover = g_base + kRvaHoverCandidate;
-    const bool wantsHoverHook = g_selection || (g_nativeBracketProbe && g_nativeBracketProbeHook);
+    const bool wantsHoverHook = g_selection || (g_nativeBracketProbe && g_nativeBracketProbeHook) || g_meleeVmExclude;
     if (!wantsHoverHook) {
         LogLine("Freelook: hover-candidate hook skipped (selection=0 nativeBracketProbe=%d hook=%d)",
             g_nativeBracketProbe ? 1 : 0,
