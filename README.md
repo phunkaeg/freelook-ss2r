@@ -81,7 +81,7 @@ Delete the five files from the game folder and `mods\flataim.kpf`. To un-patch a
 - **F5 does nothing** — check `flataim.log` in the game folder. `waiting for SS2FA Squirrel bridge` means `mods\flataim.kpf` isn't loading; for an existing save, run `FreelookSavePatcher.exe`.
 - **Crosshair off-centre** — shouldn't happen (auto-calibration). Open an issue with `flataim.log` and your resolution.
 - **Saves not found by the patcher** — it resolves your real Windows *Saved Games* folder (including relocated/OneDrive profiles); if yours still isn't found it will ask for the path.
-- **Antivirus flags the loader/DLL** — false positive common to all injection-based game mods. The full source is this repository. VirusTotal scans (v1.0.1): [FreelookLoader.exe](https://www.virustotal.com/gui/file/babbdbd66252797ff11c5b48e26cb9b0072e38cb96af333dac304519a9db0a31) · [FreelookSavePatcher.exe](https://www.virustotal.com/gui/file/0bd1e3a4c5ff293f3d2c457f26d6c22bcebc7479a9fa06770d5114a08e017c48) · [FlatAim.dll](https://www.virustotal.com/gui/file/ada9d6d9706aad37d1a25e04a44af87b3d3434afb21ab7d3c9ac85326d2f7f84).
+- **Antivirus flags the loader/DLL** — false positive common to all injection-based game mods. The full source is this repository. VirusTotal scans (v1.0.2): [FreelookLoader.exe](https://www.virustotal.com/gui/file/babbdbd66252797ff11c5b48e26cb9b0072e38cb96af333dac304519a9db0a31) · [FreelookSavePatcher.exe](https://www.virustotal.com/gui/file/68ea4b0cad85db3ce33743135f3847da32eef846e3178c051b0a726050c559aa) · [FlatAim.dll](https://www.virustotal.com/gui/file/03d3079699953c16497482054b063e21cb720a4a85f2b2a53642d5e644b0e5ee).
 
 ## Known issues
 
